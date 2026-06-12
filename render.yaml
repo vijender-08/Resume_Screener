@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: resume-screener
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run jd_analyser.py --server.port $PORT --server.address 0.0.0.0
+    plan: free
