@@ -1,7 +1,8 @@
 import streamlit as st
 import os
 from pypdf import PdfReader
-from sentence_transformers import SentenceTransformer, util
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 import plotly.graph_objects as go
 import pandas as pd
 
@@ -162,12 +163,7 @@ p, li, label { color: rgba(255,255,255,0.75) !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────
-# Model
-# ─────────────────────────────────────────
-@st.cache_resource(show_spinner="🔄 Loading AI Model...")
-def load_model():
-    return SentenceTransformer("all-MiniLM-L6-v2")
+
 
 # ─────────────────────────────────────────
 # PDF text extract
@@ -182,43 +178,48 @@ def extract_text(pdf_file):
 # Semantic > threshold = soft match (green)
 # Below threshold = missing (red)
 # ─────────────────────────────────────────
-def analyze_resume(model, skills, resume_text, threshold):
+def analyze_resume(skills, resume_text, threshold):
     matched, missing = [], []
     resume_lower = resume_text.lower()
 
-    # Split resume into sentences for semantic search
-    sentences = [s.strip() for s in resume_text.replace("\n", ". ").split(".") if len(s.strip()) > 8]
+    sentences = [
+        s.strip()
+        for s in resume_text.replace("\n", ". ").split(".")
+        if len(s.strip()) > 8
+    ]
+
     if not sentences:
         return matched, missing
-
-    res_embeddings = model.encode(sentences, convert_to_tensor=True)
 
     for skill in skills:
         skill_lower = skill.lower()
 
-        # 1. Exact keyword check first
-        keyword_found = skill_lower in resume_lower
-
-        # 2. Semantic similarity
-        skill_emb = model.encode(skill, convert_to_tensor=True)
-        scores = util.cos_sim(skill_emb, res_embeddings)[0]
-        best_score = float(scores.max())
-        best_sentence = sentences[int(scores.argmax())]
-
-        if keyword_found:
-            # Direct keyword match — most reliable
+        # Exact keyword match
+        if skill_lower in resume_lower:
             matched.append({
                 "skill": skill,
-                "score": max(round(best_score * 100), 75),
-                "reason": best_sentence[:120],
-                "type": "keyword"   # exact match
+                "score": 100,
+                "reason": "Exact keyword found in resume",
+                "type": "keyword"
             })
-        elif best_score >= threshold:
-            # Semantic match
+            continue
+
+        # TF-IDF similarity
+        docs = [skill] + sentences
+
+        vectorizer = TfidfVectorizer()
+        vectors = vectorizer.fit_transform(docs)
+
+        scores = cosine_similarity(vectors[0:1], vectors[1:])[0]
+
+        best_idx = scores.argmax()
+        best_score = float(scores[best_idx])
+
+        if best_score >= threshold:
             matched.append({
                 "skill": skill,
                 "score": round(best_score * 100),
-                "reason": best_sentence[:120],
+                "reason": sentences[best_idx][:120],
                 "type": "semantic"
             })
         else:
@@ -242,7 +243,7 @@ with st.sidebar:
 
     threshold = st.slider(
         "Semantic Match Sensitivity",
-        0.30, 0.65, 0.50, 0.05,
+        0.05, 0.50, 0.15, 0.05,
         help="Higher = strict (only exact matches) | Lower = loose (more matches)"
     )
     st.caption("💡 Keyword matches are not affected by sensitivity")
@@ -308,7 +309,7 @@ if go_btn:
         st.error("❌ Please enter skills in the sidebar!")
         st.stop()
 
-    model = load_model()
+    
     results = []
     bar = st.progress(0, "Analyzing...")
 
@@ -316,7 +317,7 @@ if go_btn:
         bar.progress((i+1)/len(uploaded), f"🔍 Analyzing: {f.name}")
         text = extract_text(f)
         if text:
-            matched, missing = analyze_resume(model, skills, text, threshold)
+            matched, missing = analyze_resume(skills, text, threshold)
             pct = round(len(matched)/len(skills)*100)
             results.append({
                 "name": f.name.replace(".pdf",""),
