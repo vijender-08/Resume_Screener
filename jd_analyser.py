@@ -503,3 +503,4 @@ if go_btn:
                 txt,
                 file_name=f"{r['name']}_analysis.txt",
                 key=f"dl_{idx}_{r['name'][:10]}"
+            )
